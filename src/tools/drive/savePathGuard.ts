@@ -91,3 +91,51 @@ export function ensureWithinDownloadRoots(savePath: string, roots: string[]): st
 
   return resolved;
 }
+
+// ---------------------------------------------------------------------------
+// Path boundary for uploadFile's `filePath` (the mirror image of downloadFile).
+//
+// uploadFile reads a local file chosen by the agent and sends it to Drive. With
+// untrusted content in the conversation (indirect prompt injection) an
+// unconstrained `filePath` would let an attacker exfiltrate ~/.ssh keys, .env
+// files, cloud credentials, ... into Drive. Reads are therefore confined to
+// allowed roots, with symlinks resolved on both sides.
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses GOOGLE_DOCS_MCP_UPLOAD_ROOTS: a platform-delimited list of directories
+ * uploadFile may read from. Defaults to the working directory.
+ */
+export function parseUploadRoots(value?: string, cwd: string = process.cwd()): string[] {
+  const raw = value ?? process.env.GOOGLE_DOCS_MCP_UPLOAD_ROOTS ?? '';
+  const entries = raw
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => path.resolve(cwd, entry));
+
+  return entries.length > 0 ? entries : [path.resolve(cwd)];
+}
+
+/**
+ * Resolves `filePath` (following symlinks) and throws if it is outside the
+ * allowed roots. Returns the canonical path that must be read.
+ *
+ * @throws Error when the file escapes every allowed root.
+ */
+export function ensureReadableWithinUploadRoots(filePath: string, roots: string[]): string {
+  const realTarget = canonicalize(path.resolve(filePath));
+  const realRoots = roots.map((root) => canonicalize(root));
+
+  if (!realRoots.some((root) => isInside(realTarget, root))) {
+    throw new Error(
+      `filePath must stay inside the allowed upload directory. ` +
+        `"${filePath}" resolves to "${realTarget}", which is outside ${realRoots
+          .map((root) => `"${root}"`)
+          .join(', ')}. ` +
+        `Pass a path inside that directory, or set GOOGLE_DOCS_MCP_UPLOAD_ROOTS to allow another one.`
+    );
+  }
+
+  return realTarget;
+}
