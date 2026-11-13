@@ -82,6 +82,14 @@ const UploadFileParameters = z.strictObject({
     .string()
     .optional()
     .describe('MIME type of the local file. Guessed from the extension if omitted.'),
+  replaceFileId: z
+    .string()
+    .optional()
+    .describe(
+      'ID of an EXISTING Drive file whose content to replace in place (same URL, permissions and ' +
+        'revision history; for a Google Doc/Sheet/Slides the uploaded Office file is converted again). ' +
+        'Cannot be combined with parentFolderId. Use only when the user asked to update that file.'
+    ),
   convertToGoogleFormat: z
     .boolean()
     .optional()
@@ -99,7 +107,7 @@ export function register(server: FastMCP) {
     description:
       'Uploads a local file to Google Drive (any type: PDF, docx, images, ...). ' +
       'Optionally places it in a folder and optionally converts Office/text files to a native ' +
-      'Google Doc, Sheet or Slides. Always creates a new file (never overwrites); search first ' +
+      'Google Doc, Sheet or Slides. Creates a new file (never overwrites) unless replaceFileId is given; search first ' +
       'if you need to avoid duplicates. Returns the new file id and its web link. ' +
       'Local stdio mode only; reads are confined to GOOGLE_DOCS_MCP_UPLOAD_ROOTS (default: working directory).',
     parameters: UploadFileParameters,
@@ -129,10 +137,15 @@ export function register(server: FastMCP) {
       // Guess from the LOCAL file (the Drive name may have no extension).
       const sourceMime = args.mimeType ?? guessMimeType(args.filePath);
 
-      const requestBody: drive_v3.Schema$File = { name: fileName };
+      if (args.replaceFileId && args.parentFolderId) {
+        throw new UserError('replaceFileId cannot be combined with parentFolderId.');
+      }
+
+      const requestBody: drive_v3.Schema$File =
+        args.replaceFileId && !args.name ? {} : { name: fileName };
       if (args.parentFolderId) requestBody.parents = [args.parentFolderId];
 
-      if (args.convertToGoogleFormat) {
+      if (args.convertToGoogleFormat && !args.replaceFileId) {
         const target = conversionTarget(sourceMime);
         if (!target) {
           throw new UserError(
@@ -151,12 +164,17 @@ export function register(server: FastMCP) {
 
       try {
         const drive = await getDriveClient();
-        const response = await drive.files.create({
-          requestBody,
-          media: { mimeType: sourceMime, body: fs.createReadStream(realPath) },
-          fields: 'id,name,mimeType,size,parents,webViewLink',
-          supportsAllDrives: true,
-        });
+        const media = { mimeType: sourceMime, body: fs.createReadStream(realPath) };
+        const fields = 'id,name,mimeType,size,parents,webViewLink';
+        const response = args.replaceFileId
+          ? await drive.files.update({
+              fileId: args.replaceFileId,
+              requestBody,
+              media,
+              fields,
+              supportsAllDrives: true,
+            })
+          : await drive.files.create({ requestBody, media, fields, supportsAllDrives: true });
 
         const file = response.data;
         return JSON.stringify(
