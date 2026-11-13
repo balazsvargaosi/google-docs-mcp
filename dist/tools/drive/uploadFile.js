@@ -109,7 +109,8 @@ export function register(server) {
             if (!stat.isFile())
                 throw new UserError(`Not a regular file: ${args.filePath}`);
             const fileName = args.name ?? path.basename(args.filePath);
-            const sourceMime = args.mimeType ?? guessMimeType(fileName);
+            // Guess from the LOCAL file (the Drive name may have no extension).
+            const sourceMime = args.mimeType ?? guessMimeType(args.filePath);
             const requestBody = { name: fileName };
             if (args.parentFolderId)
                 requestBody.parents = [args.parentFolderId];

@@ -126,7 +126,8 @@ export function register(server: FastMCP) {
       if (!stat.isFile()) throw new UserError(`Not a regular file: ${args.filePath}`);
 
       const fileName = args.name ?? path.basename(args.filePath);
-      const sourceMime = args.mimeType ?? guessMimeType(fileName);
+      // Guess from the LOCAL file (the Drive name may have no extension).
+      const sourceMime = args.mimeType ?? guessMimeType(args.filePath);
 
       const requestBody: drive_v3.Schema$File = { name: fileName };
       if (args.parentFolderId) requestBody.parents = [args.parentFolderId];
